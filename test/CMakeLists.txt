@@ -478,6 +478,14 @@ TARGET_LINK_LIBRARIES(fingerprint-cache-test PRIVATE
 ADD_TEST(NAME fingerprint-cache-test COMMAND fingerprint-cache-test)
 SET_TARGET_PROPERTIES(fingerprint-cache-test PROPERTIES CXX_EXTENSIONS YES)
 
+ADD_EXECUTABLE(fingerprint-cache-concurrency-test fingerprint-cache-concurrency.cc)
+TARGET_LINK_LIBRARIES(fingerprint-cache-concurrency-test PRIVATE
+  xnnpack-test
+  xnnpack-fingerprint-cache
+  xnnpack-fingerprint-id)
+ADD_TEST(NAME fingerprint-cache-concurrency-test COMMAND fingerprint-cache-concurrency-test)
+SET_TARGET_PROPERTIES(fingerprint-cache-concurrency-test PROPERTIES CXX_EXTENSIONS YES)
+
 ADD_EXECUTABLE(polyfill-test polyfill.cc)
 TARGET_LINK_LIBRARIES(polyfill-test PRIVATE
   xnnpack-test)
