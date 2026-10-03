@@ -267,7 +267,12 @@ struct BitwiseXorOp {
 template <typename T>
 struct ShiftLeftOp {
   static constexpr T type_mask = sizeof(T) * 8 - 1;
-  T operator()(T a, T b) const { return a << (b & type_mask); }
+  T operator()(T a, T b) const {
+    // Left-shifting a negative value is undefined behaviour in C, so shift in
+    // the unsigned domain, which also wraps within T as this operator intends.
+    return static_cast<typename std::make_unsigned<T>::type>(a) <<
+           (b & type_mask);
+  }
 };
 
 template <typename T>
