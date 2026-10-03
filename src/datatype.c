@@ -159,16 +159,26 @@ size_t xnn_datatype_log2_size_bits(enum xnn_datatype t) {
 
 size_t xnn_datatype_log2_size_bytes(enum xnn_datatype t) {
   size_t size_bits = xnn_datatype_log2_size_bits(t);
-  assert(size_bits >= 3);
+  // `size_bits` is a `size_t`, so the `-1` that xnn_datatype_log2_size_bits
+  // returns for xnn_datatype_invalid arrives here as SIZE_MAX and would satisfy
+  // a `size_bits >= 3` test on its own. Check the datatype as well.
+  assert(t != xnn_datatype_invalid && size_bits >= 3);
   return size_bits - 3;
 }
 
 size_t xnn_datatype_size_bits(enum xnn_datatype t) {
-  return 1 << xnn_datatype_log2_size_bits(t);
+  const size_t log2_size_bits = xnn_datatype_log2_size_bits(t);
+  // Left-shifting by more than the width of the type is undefined behaviour, and
+  // xnn_datatype_invalid yields SIZE_MAX here. No valid datatype needs more
+  // than 5 bits, so anything larger is the invalid datatype, which has no size.
+  return log2_size_bits < 8 ? ((size_t)1 << log2_size_bits) : 0;
 }
 
 size_t xnn_datatype_size_bytes(enum xnn_datatype t) {
-  return 1 << xnn_datatype_log2_size_bytes(t);
+  const size_t log2_size_bytes = xnn_datatype_log2_size_bytes(t);
+  // Same reasoning as xnn_datatype_size_bits: no valid datatype needs more than
+  // 2 bits here, so a larger value means xnn_datatype_invalid.
+  return log2_size_bytes < 8 ? ((size_t)1 << log2_size_bytes) : 0;
 }
 
 bool xnn_datatype_is_byte_addressable(enum xnn_datatype t) {

@@ -470,6 +470,13 @@ TARGET_LINK_LIBRARIES(buffer-test PRIVATE
 ADD_TEST(NAME buffer-test COMMAND buffer-test)
 SET_TARGET_PROPERTIES(buffer-test PROPERTIES CXX_EXTENSIONS YES)
 
+ADD_EXECUTABLE(datatype-test datatype.cc)
+TARGET_LINK_LIBRARIES(datatype-test PRIVATE
+  xnnpack-test
+  xnnpack-datatype)
+ADD_TEST(NAME datatype-test COMMAND datatype-test)
+SET_TARGET_PROPERTIES(datatype-test PROPERTIES CXX_EXTENSIONS YES)
+
 ADD_EXECUTABLE(fingerprint-cache-test fingerprint_cache.cc)
 TARGET_LINK_LIBRARIES(fingerprint-cache-test PRIVATE
   xnnpack-test
