@@ -61,8 +61,12 @@ void xnn_set_fingerprint(const struct xnn_fingerprint fingerprint) {
       break;
     }
   }
-  if (i >= fingerprint_vector_size) {
-    assert(fingerprint_vector_size < XNN_FINGERPRINT_MAX_COUNT);
+  if (i >= fingerprint_vector_size &&
+      fingerprint_vector_size < XNN_FINGERPRINT_MAX_COUNT) {
+    // The vector is fixed size and `id` is caller-supplied, so the bound has to
+    // be enforced at run time: with only an assert, a caller that sets more
+    // distinct ids than there is room for writes past the end of the array in
+    // release builds. Keep the fingerprints already stored.
     fingerprint_vector[fingerprint_vector_size++] = fingerprint;
   }
   xnn_mutex_unlock(&mutex);

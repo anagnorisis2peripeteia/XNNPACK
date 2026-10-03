@@ -127,3 +127,26 @@ TEST_F(FingerprintCacheTest, ReserveAndWrite) {
   EXPECT_THAT(fingerprint->id, Eq(xnn_fingerprint_id_test_f16_f32_qc8w_nr2));
   EXPECT_THAT(fingerprint->value, Not(Eq(0)));
 }
+
+// The fingerprint vector holds a fixed number of entries (256) and
+// `xnn_set_fingerprint` takes a caller-supplied id, so the bound has to hold at
+// run time. Run this test under AddressSanitizer: with only an assert guarding
+// the bound, a release build writes past the end of the vector here.
+TEST_F(FingerprintCacheTest, SetMoreFingerprintsThanTheVectorHolds) {
+  constexpr uint32_t kNumDistinctIds = 300;  // The vector holds 256.
+  for (uint32_t id = 1; id <= kNumDistinctIds; id++) {
+    xnn_set_fingerprint({id, id});
+  }
+
+  // The fingerprints that do fit are still stored, and still readable.
+  const xnn_fingerprint* first = xnn_get_fingerprint(1);
+  ASSERT_THAT(first, NotNull());
+  EXPECT_THAT(first->id, Eq(1u));
+  EXPECT_THAT(first->value, Eq(1u));
+
+  // Updating an id that is already stored still works once the vector is full.
+  xnn_set_fingerprint({1, 4242});
+  const xnn_fingerprint* updated = xnn_get_fingerprint(1);
+  ASSERT_THAT(updated, NotNull());
+  EXPECT_THAT(updated->value, Eq(4242u));
+}
