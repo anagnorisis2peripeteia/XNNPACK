@@ -180,7 +180,15 @@ enum xnn_status xnn_create_weights_cache_with_size(size_t size, xnn_weights_cach
 
 error:
   if (cache_provider != NULL) {
+    // Release the cache contents, then the descriptors this function allocated.
+    // xnn_internal_release_weights_cache() only releases the weights, the bucket
+    // array and the mutex, so the context itself has to be freed separately, and
+    // so does the provider. xnn_delete_weights_cache() does exactly this.
     xnn_internal_release_weights_cache(cache_provider->context);
+    if (cache_provider->context != NULL) {
+      xnn_release_memory(cache_provider->context);
+    }
+    xnn_release_memory(cache_provider);
   }
   return status;
 }

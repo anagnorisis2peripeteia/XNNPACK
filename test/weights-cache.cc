@@ -14,6 +14,7 @@
 #include "include/xnnpack.h"
 #include "src/xnnpack/cache.h"
 #include "src/xnnpack/common.h"
+#include "src/xnnpack/params.h"
 #include "src/xnnpack/memory.h"
 
 static void* cache_end(const struct xnn_internal_weights_cache* cache) {
@@ -50,6 +51,146 @@ TEST(WEIGHTS_CACHE, init_with_size_and_release) {
 
 TEST(WEIGHTS_CACHE, release_null) {
   EXPECT_EQ(xnn_status_success, xnn_internal_release_weights_cache(nullptr));
+}
+
+namespace {
+
+// Counts live allocations and fails the Nth one, so a test can assert that a
+// failed create releases everything it took. It swaps xnn_params.allocator
+// directly, the way CountingAllocatorGuard does in convolution-nhwc.cc, so it
+// does not depend on xnn_initialize() having been called first.
+class LeakCountingAllocatorGuard {
+ public:
+  explicit LeakCountingAllocatorGuard(size_t fail_at)
+      : saved_allocator_(xnn_params.allocator), fail_at_(fail_at) {
+    xnn_params.allocator.context = this;
+    xnn_params.allocator.allocate = Allocate;
+    xnn_params.allocator.reallocate = Reallocate;
+    xnn_params.allocator.deallocate = Deallocate;
+    xnn_params.allocator.aligned_allocate = AlignedAllocate;
+    xnn_params.allocator.aligned_deallocate = AlignedDeallocate;
+  }
+
+  ~LeakCountingAllocatorGuard() { xnn_params.allocator = saved_allocator_; }
+
+  LeakCountingAllocatorGuard(const LeakCountingAllocatorGuard&) = delete;
+  LeakCountingAllocatorGuard& operator=(const LeakCountingAllocatorGuard&) =
+      delete;
+
+  size_t attempts() const { return attempts_; }
+  // Allocations that were made and not yet released through these hooks.
+  size_t live() const { return live_; }
+
+ private:
+  bool ShouldFail() { return ++attempts_ == fail_at_; }
+  void NoteFree() {
+    if (live_ > 0) {
+      live_--;
+    }
+  }
+
+  static void* Allocate(void* context, size_t size) {
+    auto* self = static_cast<LeakCountingAllocatorGuard*>(context);
+    if (self->ShouldFail()) {
+      return nullptr;
+    }
+    void* pointer =
+        self->saved_allocator_.allocate(self->saved_allocator_.context, size);
+    if (pointer != nullptr) {
+      self->live_++;
+    }
+    return pointer;
+  }
+
+  static void* Reallocate(void* context, void* pointer, size_t size) {
+    auto* self = static_cast<LeakCountingAllocatorGuard*>(context);
+    if (self->ShouldFail()) {
+      return nullptr;
+    }
+    return self->saved_allocator_.reallocate(self->saved_allocator_.context,
+                                             pointer, size);
+  }
+
+  static void Deallocate(void* context, void* pointer) {
+    auto* self = static_cast<LeakCountingAllocatorGuard*>(context);
+    if (pointer != nullptr) {
+      self->NoteFree();
+    }
+    self->saved_allocator_.deallocate(self->saved_allocator_.context, pointer);
+  }
+
+  static void* AlignedAllocate(void* context, size_t alignment, size_t size) {
+    auto* self = static_cast<LeakCountingAllocatorGuard*>(context);
+    if (self->ShouldFail()) {
+      return nullptr;
+    }
+    void* pointer = self->saved_allocator_.aligned_allocate(
+        self->saved_allocator_.context, alignment, size);
+    if (pointer != nullptr) {
+      self->live_++;
+    }
+    return pointer;
+  }
+
+  static void AlignedDeallocate(void* context, void* pointer) {
+    auto* self = static_cast<LeakCountingAllocatorGuard*>(context);
+    if (pointer != nullptr) {
+      self->NoteFree();
+    }
+    self->saved_allocator_.aligned_deallocate(self->saved_allocator_.context,
+                                              pointer);
+  }
+
+  const struct xnn_allocator saved_allocator_;
+  const size_t fail_at_;
+  size_t attempts_ = 0;
+  size_t live_ = 0;
+};
+
+}  // namespace
+
+// Regression test for xnn_create_weights_cache_with_size() leaking on its error
+// path.
+//
+// The error path releases the cache contents but not the two descriptors it had
+// already allocated:
+//
+//   error:
+//     if (cache_provider != NULL) {
+//       xnn_internal_release_weights_cache(cache_provider->context);
+//     }
+//     return status;
+//
+// xnn_delete_weights_cache(), which handles the same teardown on the success
+// path, goes on to free `weights_cache->context` and `weights_cache` itself.
+// xnn_internal_release_weights_cache() only releases the weights, the bucket
+// array and the mutex, so both descriptors survive. A caller that retries create
+// after a failed allocation - the normal reaction to ENOMEM - accumulates them.
+TEST(WEIGHTS_CACHE, create_out_of_memory_releases_everything) {
+  ASSERT_EQ(xnn_status_success, xnn_initialize(/*allocator=*/nullptr));
+
+  // Indices 1 and 2 are the two descriptors this function allocates itself:
+  //   1: the provider descriptor, freed before the leak exists
+  //   2: the internal cache descriptor, leaving the provider behind
+  // Deeper indices fail inside xnn_internal_init_weights_cache(), which is a
+  // separate function with its own error handling.
+  for (size_t fail_at = 1; fail_at <= 2; fail_at++) {
+    LeakCountingAllocatorGuard allocator_guard(fail_at);
+
+    xnn_weights_cache_t weights_cache = nullptr;
+    const xnn_status status =
+        xnn_create_weights_cache_with_size(XNN_DEFAULT_WEIGHTS_BUFFER_SIZE,
+                                           &weights_cache);
+
+    if (allocator_guard.attempts() < fail_at) {
+      // This create never reached the failing index, so nothing was injected.
+      continue;
+    }
+
+    EXPECT_NE(status, xnn_status_success) << "fail_at=" << fail_at;
+    EXPECT_EQ(weights_cache, nullptr) << "fail_at=" << fail_at;
+    EXPECT_EQ(allocator_guard.live(), 0) << "fail_at=" << fail_at;
+  }
 }
 
 TEST(WEIGHTS_CACHE, get_or_insert) {
